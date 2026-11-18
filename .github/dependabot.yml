@@ -1,0 +1,12 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+
+  # Keeps the mlocati/php-extension-installer pin in php/Dockerfile current.
+  - package-ecosystem: docker
+    directory: /php
+    schedule:
+      interval: monthly
