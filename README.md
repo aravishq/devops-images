@@ -19,12 +19,13 @@ the official `php:<version>-cli` image (Debian).
 
 Tags per version, for example for 8.4:
 
-| Tag              | Meaning                                                    |
-| ---------------- | ---------------------------------------------------------- |
-| `8.4`            | Latest weekly build of PHP 8.4; use this in pipelines      |
-| `8.4.27`         | Latest build of that exact PHP release                     |
-| `8.4-20261123`   | Build of that date; never overwritten, for pinning         |
-| `8.4-amd64`, `8.4-arm64` | Intermediate single-platform builds; do not use    |
+| Tag      | Meaning                                                                         |
+| -------- | ------------------------------------------------------------------------------- |
+| `8.4`    | Latest weekly build of PHP 8.4; use this in pipelines                           |
+| `8.4.27` | Latest build of that exact PHP release; deleted six months after its last build |
+
+A patch tag keeps receiving the weekly Debian updates as long as it is the
+current release of its version.
 
 Usage in `.gitlab-ci.yml`:
 
@@ -40,14 +41,23 @@ weekly build only picks up Debian updates (`apt-get upgrade`), no PHP fixes.
 
 `.github/workflows/php.yml` runs:
 
-- on every pull request: build and test, no push;
+- on every pull request: build and test, and a dry run of the cleanup (the log
+  shows what it would delete);
 - on every push to `main`, every Monday at 03:17 UTC and on demand
-  (Actions, "Run workflow"): build, test and publish.
+  (Actions, "Run workflow"): build, test, publish and clean up.
 
-Every version is built and tested twice, on a native amd64 and a native arm64
-runner, and pushed as `<version>-<arch>`. The `publish` job then combines both
-into the multi-arch tags above. A version is only published when both of its
-builds succeeded in that run; the other versions are published regardless.
+| Job       | What it does                                                                                                                                           |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `build`   | Builds and tests every version on a native amd64 and a native arm64 runner, then pushes each image without a tag (by digest).                         |
+| `publish` | Combines both architectures of a version into the tags above. A version is only published when both its builds succeeded; the others go ahead anyway. |
+| `cleanup` | Deletes images nothing points to any more (previous weekly builds) and patch tags older than six months. Skipped when a publish failed.                 |
+
+The cleanup uses
+[dataaxiom/ghcr-cleanup-action](https://github.com/dataaxiom/ghcr-cleanup-action),
+which understands multi-arch images: it never deletes the platform images of a
+tagged image. Untagged platform entries can still show up in the package list
+on GitHub; that is expected. Deleted versions can be restored for 30 days via
+the GitHub API; the cleanup log lists their IDs.
 
 Each build starts from a freshly pulled base image without cache, so PHP and
 Debian security updates are included. `php/test.sh` fails the build when a
@@ -63,7 +73,9 @@ request or re-enabling the workflow under Actions resets that.
 - Extension: add it to the `install-php-extensions` line in `php/Dockerfile`
   and to the list in `php/test.sh`.
 - PHP version: add it to both `matrix.php` lists in `.github/workflows/php.yml`
-  (jobs `build` and `publish`) and to the table above.
+  (jobs `build` and `publish`) and to the table above. Remove a version the same
+  way; its minor tag (for example `8.1`) then stays until you delete it under
+  the package on GitHub.
 
 Test locally:
 
