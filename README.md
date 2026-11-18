@@ -15,6 +15,7 @@ the official `php:<version>-cli` image (Debian).
 | Extensions | bcmath, gd, intl, pcntl, pdo_mysql, pdo_pgsql, redis, zip         |
 | Tools      | composer, git, unzip                                              |
 | Versions   | 8.1, 8.3, 8.4, 8.5                                                |
+| Platforms  | linux/amd64, linux/arm64 (Docker picks the right one)             |
 
 Tags per version, for example for 8.4:
 
@@ -23,6 +24,7 @@ Tags per version, for example for 8.4:
 | `8.4`            | Latest weekly build of PHP 8.4; use this in pipelines      |
 | `8.4.27`         | Latest build of that exact PHP release                     |
 | `8.4-20261123`   | Build of that date; never overwritten, for pinning         |
+| `8.4-amd64`, `8.4-arm64` | Intermediate single-platform builds; do not use    |
 
 Usage in `.gitlab-ci.yml`:
 
@@ -40,7 +42,12 @@ weekly build only picks up Debian updates (`apt-get upgrade`), no PHP fixes.
 
 - on every pull request: build and test, no push;
 - on every push to `main`, every Monday at 03:17 UTC and on demand
-  (Actions, "Run workflow"): build, test and push.
+  (Actions, "Run workflow"): build, test and publish.
+
+Every version is built and tested twice, on a native amd64 and a native arm64
+runner, and pushed as `<version>-<arch>`. The `publish` job then combines both
+into the multi-arch tags above. A version is only published when both of its
+builds succeeded in that run; the other versions are published regardless.
 
 Each build starts from a freshly pulled base image without cache, so PHP and
 Debian security updates are included. `php/test.sh` fails the build when a
@@ -55,8 +62,8 @@ request or re-enabling the workflow under Actions resets that.
 
 - Extension: add it to the `install-php-extensions` line in `php/Dockerfile`
   and to the list in `php/test.sh`.
-- PHP version: add it to `matrix.php` in `.github/workflows/php.yml` and to the
-  table above.
+- PHP version: add it to both `matrix.php` lists in `.github/workflows/php.yml`
+  (jobs `build` and `publish`) and to the table above.
 
 Test locally:
 
