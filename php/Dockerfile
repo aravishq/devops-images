@@ -14,7 +14,7 @@ COPY --from=installer /usr/bin/install-php-extensions /usr/local/bin/
 RUN apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends git unzip \
-    && install-php-extensions bcmath gd intl pcntl pdo_mysql pdo_pgsql redis zip @composer \
+    && install-php-extensions bcmath gd intl pcntl pdo_mysql pdo_pgsql redis soap sockets xsl zip @composer \
     && rm -rf /var/lib/apt/lists/*
 
 ENV COMPOSER_ALLOW_SUPERUSER=1

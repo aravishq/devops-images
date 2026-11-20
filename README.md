@@ -10,12 +10,12 @@ builds them and publishes them to the GitHub Container Registry.
 Lean PHP CLI image for CI jobs (tests, code style, `composer install`), based on
 the official `php:<version>-cli` image (Debian).
 
-| Contents   |                                                                   |
-| ---------- | ----------------------------------------------------------------- |
-| Extensions | bcmath, gd, intl, pcntl, pdo_mysql, pdo_pgsql, redis, zip         |
-| Tools      | composer, git, unzip                                              |
-| Versions   | 8.1, 8.3, 8.4, 8.5                                                |
-| Platforms  | linux/amd64, linux/arm64 (Docker picks the right one)             |
+| Contents   |                                                                               |
+| ---------- | ----------------------------------------------------------------------------- |
+| Extensions | bcmath, gd, intl, pcntl, pdo_mysql, pdo_pgsql, redis, soap, sockets, xsl, zip |
+| Tools      | composer, git, unzip                                                          |
+| Versions   | 8.1, 8.3, 8.4, 8.5                                                            |
+| Platforms  | linux/amd64, linux/arm64 (Docker picks the right one)                         |
 
 Tags per version, for example for 8.4:
 
