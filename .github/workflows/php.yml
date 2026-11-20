@@ -2,7 +2,8 @@ name: php
 
 # Builds ghcr.io/aravishq/devops/php for every supported PHP version, for
 # amd64 and arm64 on native runners, publishes one multi-arch image per version
-# and removes images that are no longer tagged.
+# and removes images that are no longer tagged. The PHP versions in NODE_PHP
+# also get a variant with Node.js (current LTS).
 #
 # Pull requests build and test, and show what the cleanup would delete
 # (dry run). Main, the weekly schedule and manual runs publish and clean up.
@@ -21,10 +22,12 @@ permissions:
 
 env:
   IMAGE: ghcr.io/aravishq/devops/php
+  # PHP versions that also get the php-node variant (8.4-node, 8.4-node26).
+  NODE_PHP: '["8.4"]'
 
 jobs:
   # Builds and tests one architecture, then pushes it without a tag (by
-  # digest) and hands the digest to the publish job.
+  # digest) and hands the digests to the publish job.
   build:
     name: build (${{ matrix.php }}, ${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
@@ -50,10 +53,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build, test and push
+      - name: Build, test and push php
         run: |
           args=(
             --provenance=false
+            --target php
             --build-arg PHP_VERSION=${{ matrix.php }}
             --label org.opencontainers.image.source=https://github.com/${{ github.repository }}
             --label "org.opencontainers.image.description=PHP ${{ matrix.php }} CLI for CI jobs"
@@ -64,25 +68,54 @@ jobs:
           docker buildx build --pull --no-cache --load --tag php-test "${args[@]}"
           php/test.sh php-test
 
+          mkdir -p out
           if [ "${{ github.event_name }}" != pull_request ]; then
             # Same build again, served from the builder's cache, pushed by digest.
             docker buildx build "${args[@]}" \
               --metadata-file metadata.json \
               --output "type=image,name=$IMAGE,push-by-digest=true,name-canonical=true,push=true"
-            jq -r '."containerimage.digest"' metadata.json > digest.txt
-            cat digest.txt
+            jq -r '."containerimage.digest"' metadata.json > out/php.txt
+            cat out/php.txt
+          fi
+
+      - name: Build, test and push php-node
+        if: contains(fromJSON(env.NODE_PHP), matrix.php)
+        run: |
+          args=(
+            --provenance=false
+            --target php-node
+            --build-arg PHP_VERSION=${{ matrix.php }}
+            --label org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            --label "org.opencontainers.image.description=PHP ${{ matrix.php }} CLI with Node.js LTS for CI jobs"
+            php
+          )
+
+          # The php stage comes from the cache of the previous step, so it is
+          # the image that was just tested; --pull fetches the current Node LTS.
+          docker buildx build --pull --load --tag php-node-test "${args[@]}"
+          php/test-node.sh php-node-test
+
+          if [ "${{ github.event_name }}" != pull_request ]; then
+            docker run --rm php-node-test node -p 'process.versions.node.split(".")[0]' > out/node-major.txt
+            docker buildx build "${args[@]}" \
+              --metadata-file metadata-node.json \
+              --output "type=image,name=$IMAGE,push-by-digest=true,name-canonical=true,push=true"
+            jq -r '."containerimage.digest"' metadata-node.json > out/node.txt
+            cat out/node.txt out/node-major.txt
           fi
 
       - uses: actions/upload-artifact@v7
-        if: github.event_name != 'pull_request'
+        if: always() && github.event_name != 'pull_request'
         with:
           name: digest-${{ matrix.php }}-${{ matrix.arch }}
-          path: digest.txt
+          path: out/
+          if-no-files-found: ignore
           retention-days: 1
 
   # Combines both architectures of a version into the tags <minor> and
-  # <patch>, for example 8.4 and 8.4.27. A version is only published when both
-  # of its builds succeeded, so one broken version does not hold back the others.
+  # <patch>, for example 8.4 and 8.4.27, and for php-node into 8.4-node and
+  # 8.4-node26. A version is only published when both of its builds succeeded,
+  # so one broken version does not hold back the others.
   publish:
     needs: build
     if: ${{ !cancelled() && github.event_name != 'pull_request' }}
@@ -104,10 +137,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish multi-arch tags
+      - name: Publish php
         run: |
-          amd64=$(cat "digests/digest-${{ matrix.php }}-amd64/digest.txt" 2>/dev/null || true)
-          arm64=$(cat "digests/digest-${{ matrix.php }}-arm64/digest.txt" 2>/dev/null || true)
+          amd64=$(cat "digests/digest-${{ matrix.php }}-amd64/php.txt" 2>/dev/null || true)
+          arm64=$(cat "digests/digest-${{ matrix.php }}-arm64/php.txt" 2>/dev/null || true)
           if [ -z "$amd64" ] || [ -z "$arm64" ]; then
             echo "::error::Not every architecture of PHP ${{ matrix.php }} was built; not publishing it"
             exit 1
@@ -128,10 +161,36 @@ jobs:
             --tag "$IMAGE:$patch" \
             "$IMAGE@$amd64" "$IMAGE@$arm64"
 
-  # Deletes images nothing points to any more (previous weekly builds) and
-  # patch tags older than six months. Multi-arch aware: platform images of a
-  # tagged image are never deleted. Skipped when a publish failed; a dry run on
-  # pull requests.
+      - name: Publish php-node
+        if: ${{ !cancelled() && contains(fromJSON(env.NODE_PHP), matrix.php) }}
+        run: |
+          dir=digests/digest-${{ matrix.php }}
+          amd64=$(cat "$dir-amd64/node.txt" 2>/dev/null || true)
+          arm64=$(cat "$dir-arm64/node.txt" 2>/dev/null || true)
+          if [ -z "$amd64" ] || [ -z "$arm64" ]; then
+            echo "::error::Not every architecture of PHP ${{ matrix.php }} with Node was built; not publishing it"
+            exit 1
+          fi
+
+          # Both architectures must carry the same Node major, also when a new
+          # LTS appears in the middle of a run.
+          major=$(cat "$dir-amd64/node-major.txt")
+          if [ "$major" != "$(cat "$dir-arm64/node-major.txt")" ]; then
+            echo "::error::amd64 and arm64 were built with different Node versions; not publishing"
+            exit 1
+          fi
+
+          docker buildx imagetools create \
+            --annotation "index:org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --annotation "index:org.opencontainers.image.description=PHP ${{ matrix.php }} CLI with Node.js $major for CI jobs" \
+            --tag "$IMAGE:${{ matrix.php }}-node" \
+            --tag "$IMAGE:${{ matrix.php }}-node$major" \
+            "$IMAGE@$amd64" "$IMAGE@$arm64"
+
+  # Deletes images nothing points to any more (previous weekly builds), and
+  # patch tags and pinned Node tags (8.4-node26) six months after their last
+  # build. Multi-arch aware: platform images of a tagged image are never
+  # deleted. Skipped when a publish failed; a dry run on pull requests.
   cleanup:
     needs: publish
     if: ${{ !cancelled() && needs.publish.result != 'failure' }}
@@ -150,11 +209,11 @@ jobs:
           validate: true
           dry-run: ${{ github.event_name == 'pull_request' }}
 
-      - name: Delete patch tags older than six months
+      - name: Delete patch and pinned Node tags older than six months
         uses: dataaxiom/ghcr-cleanup-action@v1
         with:
           package: devops/php
-          delete-tags: '^\d+\.\d+\.\d+$'
+          delete-tags: '^\d+\.\d+(\.\d+|-node\d+)$'
           use-regex: true
           older-than: 6 months
           dry-run: ${{ github.event_name == 'pull_request' }}
